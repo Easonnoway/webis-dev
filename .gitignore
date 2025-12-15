@@ -68,6 +68,7 @@ dmypy.json
 # Logs
 *.log
 logs/
+code_outputs/
 
 # Temporary files
 *.tmp

@@ -1,0 +1,19 @@
+{
+            "enabled_raters": ["readability_cn", "cleanliness_cn"],
+            "weights": {
+                "readability": 0.5,
+                "cleanliness": 0.5,
+                "professionalism": 0.0,
+                "reasoning": 0.0,
+                "grammar": 0.0
+            },
+            "thresholds": {
+                "readability": 3.0,
+                "cleanliness": 3.0,
+                "professionalism": 3.0,
+                "reasoning": 3.0,
+                "grammar": 3.0
+            },
+            "overall_threshold": 3.0,
+            "mode": "all"
+        }
