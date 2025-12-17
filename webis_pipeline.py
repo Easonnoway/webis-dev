@@ -129,9 +129,19 @@ def main():
     log("\n[1/3] crawler：开始获取数据源…")
     from crawler.agent import LangChainDataSourceAgent  # local package import
     from crawler.ddg_scrapy_tool import DuckDuckGoScrapyTool
+    from crawler.gnews_tool import GNewsTool
+    from crawler.semantic_scholar import SemanticScholarTool
+    from crawler.github_api_tools import GitHubSearchTool
+    from crawler.hn_tool import HackerNewsTool
 
-    crawler_agent = LangChainDataSourceAgent(llm=llm, tools=[DuckDuckGoScrapyTool()], verbose=True)
-    crawl_result = crawler_agent.run(task=args.task, limit=args.limit)
+    crawler_agent = LangChainDataSourceAgent(llm=llm, tools=[
+            DuckDuckGoScrapyTool(),
+            GNewsTool(output_dir=str(run_dir)),
+            SemanticScholarTool(output_dir=str(run_dir)),
+            GitHubSearchTool(output_dir=str(run_dir)),
+            HackerNewsTool(output_dir=str(run_dir)),
+        ], limit=args.limit, verbose=True)
+    crawl_result = crawler_agent.run(task=args.task)
 
     crawl_meta = {
         "tool": crawl_result.name,

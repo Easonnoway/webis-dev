@@ -4,7 +4,7 @@ import requests
 import time
 from pathlib import Path
 
-from tool_base import BaseTool, ToolResult
+from .tool_base import BaseTool, ToolResult
 
 
 class SemanticScholarTool(BaseTool):

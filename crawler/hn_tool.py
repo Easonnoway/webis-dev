@@ -1,6 +1,6 @@
 import os
 import requests
-from tool_base import BaseTool, ToolResult
+from .tool_base import BaseTool, ToolResult
 
 
 class HackerNewsTool(BaseTool):

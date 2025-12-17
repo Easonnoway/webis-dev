@@ -1,7 +1,7 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-from tool_base import BaseTool, ToolResult
+from .tool_base import BaseTool, ToolResult
 
 
 class GNewsTool(BaseTool):
