@@ -213,6 +213,9 @@ class DuckDuckGoScrapyTool(BaseTool):
 
     name = "duckduckgo_scrapy"
     description = "Use DuckDuckGo + Scrapy to fetch documents or HTML pages for a keyword."
+    required_env_vars = []
+    tool_kind = "general"
+    capabilities = ["web_search", "generic_crawl", "download_files", "html"]
 
     def __init__(self, output_root: Optional[str] = None):
         self.output_root = output_root or os.path.join(os.path.dirname(__file__), "outputs")
@@ -225,6 +228,7 @@ class DuckDuckGoScrapyTool(BaseTool):
         concurrency: int = 8,
         download_delay: float = 0.5,
         output_dir: Optional[str] = None,
+        **kwargs,
     ) -> ToolResult:
         keyword = task.strip()
         if not keyword:

@@ -21,6 +21,9 @@ class SemanticScholarTool(BaseTool):
     )
 
     API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+    required_env_vars = []
+    tool_kind = "specialized"
+    capabilities = ["academic", "papers", "semantic_scholar"]
 
     def __init__(self, output_dir: str):
         self.output_dir = Path(output_dir)

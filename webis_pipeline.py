@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import pathlib
 import sys
@@ -116,6 +117,11 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="打印每个文件的处理中间信息")
     args = parser.parse_args()
 
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.WARNING,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
     def log(msg: str):
         print(msg, flush=True)
 
@@ -128,20 +134,30 @@ def main():
     # 1) Crawl
     log("\n[1/3] crawler：开始获取数据源…")
     from crawler.agent import LangChainDataSourceAgent  # local package import
+    from crawler.baidu_mcp_tool import BaiduAiSearchMcpTool
     from crawler.ddg_scrapy_tool import DuckDuckGoScrapyTool
     from crawler.gnews_tool import GNewsTool
     from crawler.semantic_scholar import SemanticScholarTool
     from crawler.github_api_tools import GitHubSearchTool
     from crawler.hn_tool import HackerNewsTool
+    from crawler.serpapi_tool import SerpApiSearchTool
 
-    crawler_agent = LangChainDataSourceAgent(llm=llm, tools=[
+    crawler_agent = LangChainDataSourceAgent(
+        llm=llm,
+        tools=[
+            BaiduAiSearchMcpTool(output_dir=str(run_dir)),
             DuckDuckGoScrapyTool(),
             GNewsTool(output_dir=str(run_dir)),
             SemanticScholarTool(output_dir=str(run_dir)),
             GitHubSearchTool(output_dir=str(run_dir)),
             HackerNewsTool(output_dir=str(run_dir)),
-        ], limit=args.limit, verbose=True)
-    crawl_result = crawler_agent.run(task=args.task)
+            SerpApiSearchTool(output_dir=str(run_dir)),
+        ],
+        verbose=args.verbose,
+    )
+    crawl_result = crawler_agent.run(task=args.task, limit=args.limit)
+    if getattr(crawler_agent, "last_choice", None):
+        log(f"[1/3] crawler：tool 选择={crawler_agent.last_choice}")
 
     crawl_meta = {
         "tool": crawl_result.name,
@@ -153,11 +169,19 @@ def main():
     }
 
     if not crawl_result.success:
-        (run_dir / "manifest.json").write_text(json.dumps({"task": args.task, "crawl": crawl_meta}, ensure_ascii=False, indent=2), encoding="utf-8")
+        log("[1/3] crawler：失败详情（用于排查）")
+        log(json.dumps(crawl_meta, ensure_ascii=False, indent=2))
+        (run_dir / "manifest.json").write_text(
+            json.dumps({"task": args.task, "crawl": crawl_meta}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         raise SystemExit(f"crawler 失败：{crawl_result.error}")
 
     crawl_files = crawl_result.files or _collect_crawl_files(crawl_result.output_dir or "")
     log(f"[1/3] crawler：完成（{len(crawl_files)} 个文件） output_dir={crawl_result.output_dir}")
+    if args.verbose and crawl_result.meta:
+        log("[1/3] crawler：执行历史")
+        log(json.dumps(crawl_result.meta, ensure_ascii=False, indent=2))
     (run_dir / "crawl_files.json").write_text(json.dumps(crawl_files, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # 2) Clean to texts

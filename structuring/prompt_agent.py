@@ -142,7 +142,8 @@ class PromptBuilderAgent:
                     "- 如果用户要表格/对比清单/可复制到 Excel -> table\n\n"
                     "重要约束：\n"
                     "- JSON 必须可被直接解析，不要输出任何额外文本、代码块或解释。\n"
-                    "- prompt 字符串里不得包含任何未转义的模板占位符；若要有，则用()代替。\n",
+                    "- prompt 字符串里不得包含任何未转义的模板占位符；若要有，则用()代替。\n"
+                    "- 如果 prompt 字符串必须包含反斜杠(\\)，请在 JSON 字符串中写成\\\\（双反斜杠）。\n",
                 ),
                 (
                     "human",
@@ -183,6 +184,139 @@ class PromptBuilderAgent:
         return prompt | self.llm | StrOutputParser()
 
     def _safe_json_parse(self, raw: str) -> Dict[str, Any]:
-        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw or "", re.S)
-        candidate = fenced.group(1) if fenced else (raw or "")
-        return json.loads(candidate.strip())
+        """
+        解析 build_with_format 返回的 JSON。
+        真实线上模型有时会输出“看起来像 JSON 但包含非法转义”的字符串（例如单个反斜杠）。
+        这里做更鲁棒的提取/修复，避免流程在最后一步崩掉。
+        """
+        text = (raw or "").strip()
+        if not text:
+            raise ValueError("LLM returned empty output for plan JSON.")
+
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+        candidate = fenced.group(1) if fenced else self._extract_first_json_object(text)
+        candidate = (candidate or text).strip()
+
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+        # 1) 尝试修复非法转义（把字符串中的 `\x` 这类无效 escape 改成 `\\x`）
+        repaired = self._sanitize_invalid_json_escapes(candidate)
+        try:
+            obj = json.loads(repaired)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+        # 2) 最后兜底：让模型把它“只修复成可解析 JSON”（仅在解析失败时触发一次额外调用）
+        try:
+            resp = self.llm.invoke(
+                [
+                    (
+                        "system",
+                        "你是 JSON 修复器。把用户提供的内容修复为严格可解析的 JSON 对象，"
+                        "且只包含两个 key：output_format 与 prompt。不要输出代码块或解释。",
+                    ),
+                    ("human", f"请修复为 JSON：\n{candidate}"),
+                ]
+            )
+            fixed = getattr(resp, "content", "") or ""
+            fixed_candidate = self._extract_first_json_object(fixed) or fixed
+            obj = json.loads((fixed_candidate or "").strip())
+            if isinstance(obj, dict):
+                return obj
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 仍失败：抛出原始内容方便排查
+        raise json.JSONDecodeError("Failed to parse plan JSON", candidate, 0)
+
+    @staticmethod
+    def _extract_first_json_object(text: str) -> str:
+        """
+        从任意文本中提取第一个 JSON 对象（{...}），使用括号平衡并忽略字符串内部括号。
+        """
+        s = text or ""
+        start = s.find("{")
+        if start == -1:
+            return s
+
+        in_str = False
+        escape = False
+        depth = 0
+        for i in range(start, len(s)):
+            ch = s[i]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return s[start : i + 1]
+        return s[start:]
+
+    @staticmethod
+    def _sanitize_invalid_json_escapes(text: str) -> str:
+        """
+        修复 JSON 字符串里的非法转义：把 `\\X`（X 不是合法 escape 起始）替换为 `\\\\X`。
+        只在字符串内部生效。
+        """
+        s = text or ""
+        out: List[str] = []
+        in_str = False
+        escape = False
+
+        valid_next = {'"', "\\", "/", "b", "f", "n", "r", "t", "u"}
+
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if not in_str:
+                out.append(ch)
+                if ch == '"':
+                    in_str = True
+                    escape = False
+                i += 1
+                continue
+
+            # in string
+            if escape:
+                out.append(ch)
+                escape = False
+                i += 1
+                continue
+
+            if ch == "\\":
+                # lookahead
+                nxt = s[i + 1] if i + 1 < len(s) else ""
+                if nxt and nxt not in valid_next:
+                    out.append("\\\\")
+                    i += 1
+                    continue
+                out.append("\\")
+                escape = True
+                i += 1
+                continue
+
+            out.append(ch)
+            if ch == '"':
+                in_str = False
+            i += 1
+
+        return "".join(out)

@@ -8,10 +8,10 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from extract_agent import StructureExtractionAgent
-from llm import get_default_llm
-from prompt_agent import PromptBuilderAgent
-from validation.manager import EnhancedValidationManager  # 新增
+from .extract_agent import StructureExtractionAgent
+from .llm import get_default_llm
+from .prompt_agent import PromptBuilderAgent
+from .validation.manager import EnhancedValidationManager  # 新增
 
 
 def read_texts(inputs):

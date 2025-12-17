@@ -1,5 +1,11 @@
 """
-Data-source agent built on LangChain to route tasks to tools.
+Data-source Agent (LangChain):
+- 用 LLM 做工具路由（选择 tool + 生成 tool_task）
+- 然后在主线程同步执行 tool.run(...)，避免 Scrapy/Twisted 在线程池里运行触发 signal 报错
+
+用法（推荐包方式运行）：
+  cd Webis_v3/Webis
+  python -m crawler.agent "帮我搜索 llm 相关文件" --limit 20
 """
 
 from __future__ import annotations
@@ -19,42 +25,28 @@ except ImportError:
     find_dotenv = None
     load_dotenv = None
 
-# ===== LangChain imports (stable for 0.1.x) =====
 try:
-    from langchain.agents import initialize_agent, AgentType
-    from langchain_core.tools import Tool
+    from langchain_core.messages import HumanMessage, SystemMessage
 except ImportError as exc:  # noqa: BLE001
-    raise ImportError(
-        "缺少 LangChain 相关依赖，请确认安装："
-        "`pip install langchain==0.1.20 langchain-openai==0.1.7`"
-    ) from exc
+    raise ImportError("缺少 LangChain 相关依赖，请安装：`pip install langchain langchain-openai`。") from exc
 
-# ===== Local tool imports =====
 if not __package__:
     sys.path.append(str(pathlib.Path(__file__).resolve().parent))
-
-    from ddg_scrapy_tool import DuckDuckGoScrapyTool
-    from tool_base import BaseTool, ToolResult
-    from gnews_tool import GNewsTool
-    from semantic_scholar import SemanticScholarTool
-    from github_api_tools import GitHubSearchTool
-    from hn_tool import HackerNewsTool
+    from ddg_scrapy_tool import DuckDuckGoScrapyTool  # type: ignore  # noqa: E402
+    from tool_base import BaseTool, ToolResult  # type: ignore  # noqa: E402
 else:
-    from .ddg_scrapy_tool import DuckDuckGoScrapyTool
+    from .ddg_scrapy_tool import DuckDuckGoScrapyTool  # noqa: F401
     from .tool_base import BaseTool, ToolResult
-    from .gnews_tool import GNewsTool
-    from .semantic_scholar import SemanticScholarTool
-    from .github_api_tools import GitHubSearchTool
-    from .hn_tool import HackerNewsTool
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def _load_env():
+def _load_env() -> None:
+    """加载项目根目录下 `.env` / `.env.local`（如果安装了 python-dotenv）。"""
     if not find_dotenv or not load_dotenv:
         return
+
     project_root = pathlib.Path(__file__).resolve().parents[1]
     for fname in (".env", ".env.local"):
         direct = project_root / fname
@@ -62,6 +54,7 @@ def _load_env():
             load_dotenv(str(direct), override=False)
             logger.info("Loaded environment from %s", direct)
             return
+
     for fname in (".env", ".env.local"):
         path = find_dotenv(fname, usecwd=True)
         if path:
@@ -72,102 +65,191 @@ def _load_env():
 
 class LangChainDataSourceAgent:
     """
-    LangChain-based agent that uses an LLM to decide which tool to call.
-    Compatible with langchain 0.1.x (initialize_agent).
+    数据源获取 Agent：
+    - LLM 只负责做工具选择（输出 JSON）
+    - 真正抓取在本进程主线程同步执行
     """
 
-    def __init__(
-        self,
-        llm,
-        tools: Optional[List[BaseTool]] = None,
-        limit: int = 5,
-        verbose: bool = False,
-    ):
+    def __init__(self, llm, tools: Optional[List[BaseTool]] = None, verbose: bool = False):
         self.llm = llm
         self.verbose = verbose
-        self.limit = limit
-
         self.tools: Dict[str, BaseTool] = {}
-        self.lc_tools: List[Tool] = []
-        self.last_result: Optional[ToolResult] = None
-
         if tools:
             for tool in tools:
                 self.register_tool(tool)
+        self.last_choice: Optional[dict] = None
 
-        self.agent = self._build_agent()
-
-    def register_tool(self, tool: BaseTool):
+    def register_tool(self, tool: BaseTool) -> None:
         self.tools[tool.name] = tool
-        self.lc_tools.append(self._wrap_tool_for_langchain(tool))
         logger.info("Registered tool: %s", tool.name)
 
-    def run(self, task: str) -> ToolResult:
-        logger.info("Agent received task: %s", task)
-        self.last_result = None
+    def available_tools(self) -> List[str]:
+        return list(self.tools.keys())
 
-        raw_output = self.agent.run(task)
+    def run(self, task: str, limit: int = 5, max_rounds: int = 4, **kwargs) -> ToolResult:
+        """
+        总调度：
+        - 目标：尽量拿到 limit 条数据（文件），不足则自动继续尝试
+        - 如果某工具失败/返回为空，自动切换其他工具
+        """
+        if not self.tools:
+            return ToolResult(name="agent", success=False, error="未注册任何 tools。")
 
-        if self.last_result:
-            return self.last_result
+        collected: List[str] = []
+        used_tools: List[dict] = []
+
+        for round_idx in range(1, max_rounds + 1):
+            remaining = max(0, int(limit) - len(collected))
+            if remaining == 0:
+                break
+
+            choice = self._choose_tool(
+                user_task=task,
+                remaining=remaining,
+                already_have=len(collected),
+                history=used_tools,
+                extra_kwargs=kwargs,
+            )
+            tool_name, tool_task, tool_kwargs = choice
+            self.last_choice = {"tool_name": tool_name, "tool_task": tool_task, "tool_kwargs": tool_kwargs}
+
+            tool = self.tools.get(tool_name)
+            if tool is None:
+                fallback = next(iter(self.tools.values()))
+                logger.warning("LLM chose unknown tool '%s', fallback to '%s'", tool_name, fallback.name)
+                tool = fallback
+                tool_name = tool.name
+
+            merged_kwargs = dict(tool_kwargs)
+            merged_kwargs.setdefault("limit", remaining)
+            merged_kwargs.update({k: v for k, v in kwargs.items() if v is not None})
+
+            if self.verbose:
+                logger.info("Round %s/%s", round_idx, max_rounds)
+                logger.info("Tool chosen: %s", tool_name)
+                logger.info("Tool task: %s", tool_task)
+                logger.info("Tool kwargs: %s", merged_kwargs)
+
+            try:
+                result = tool.run(task=tool_task, **merged_kwargs)
+            except Exception as exc:  # noqa: BLE001
+                result = ToolResult(
+                    name=tool_name,
+                    success=False,
+                    error=str(exc),
+                    meta={"tool_task": tool_task, "tool_kwargs": merged_kwargs},
+                )
+
+            new_files = [f for f in (result.files or []) if f and f not in collected]
+            collected.extend(new_files)
+
+            used_tools.append(
+                {
+                    "round": round_idx,
+                    "tool": tool_name,
+                    "tool_task": tool_task,
+                    "tool_kwargs": merged_kwargs,
+                    "success": result.success,
+                    "error": result.error,
+                    "got": len(result.files or []),
+                    "new": len(new_files),
+                    "meta": result.meta,
+                }
+            )
+
+            # 如果这轮没拿到任何新文件，下一轮让模型换个工具；但最多重试 max_rounds 次
+
+        success = len(collected) > 0
+        err = None
+        if len(collected) < int(limit):
+            err = f"仅获取到 {len(collected)}/{limit} 条数据"
 
         return ToolResult(
-            name="langchain_agent",
-            success=False,
-            error="Agent finished without tool result.",
-            meta={"raw_output": raw_output},
+            name="agent",
+            success=success,
+            files=collected,
+            output_dir=None,
+            meta={"requested": limit, "collected": len(collected), "history": used_tools},
+            error=err if not success else None,
         )
 
-    def _wrap_tool_for_langchain(self, tool: BaseTool) -> Tool:
+    def _choose_tool(
+        self,
+        user_task: str,
+        remaining: int,
+        already_have: int,
+        history: List[dict],
+        extra_kwargs: dict,
+    ) -> Tuple[str, str, dict]:
         """
-        LangChain agent ONLY passes a single string argument to tools.
+        用一次 LLM 调用做“下一步动作”决策。
+        需要具备泛化性：识别语言、是否需要翻译、工具失败后切换、补齐 remaining。
         """
+        # 1) 如果缺少某 tool 的 key，严格不让模型选择它（不出现在列表里）
+        # 2) 优先展示 specialized，其次 general（通用引擎）
+        specialized_ok: List[str] = []
+        general_ok: List[str] = []
+        for t in self.tools.values():
+            required = getattr(t, "required_env_vars", []) or []
+            missing = [k for k in required if not os.environ.get(k)]
+            if missing:
+                continue
 
-        def _run(input: str):
-            result = tool.run(task=input, limit=self.limit)
-            self.last_result = result
-            if result.success:
-                return f"success; files={len(result.files)}"
-            return f"error: {result.error}"
+            kind = getattr(t, "tool_kind", "specialized")
+            caps = getattr(t, "capabilities", []) or []
+            line = f"- {t.name} [{kind}] caps={caps}: {t.description}"
+            if kind == "general":
+                general_ok.append(line)
+            else:
+                specialized_ok.append(line)
 
-        return Tool(
-            name=tool.name,
-            description=tool.description,
-            func=_run,
+        system = (
+            "你是一个“任务总调度数据源获取 Agent”。你要做的是：为用户任务选择工具并生成工具参数，"
+            "以尽量拿到足量的数据源文件。\n"
+            "注意：用户的任务可能是中文或英文；不同工具可能需要不同语言的查询词、甚至需要你把查询词翻译成英文。\n"
+            "你必须根据工具描述自行判断是否需要翻译/改写查询词，并通过 tool_task / tool_kwargs 表达出来。\n\n"
+            "工具选择优先级：\n"
+            "1) 优先选择 specialized 工具（当其能力标签 caps 与任务明显匹配，例如 news/academic/github）。\n"
+            "2) 若 specialized 不适用或连续无结果，再选择 general 工具（通用搜索/通用爬虫引擎）兜底。\n\n"
+            "你必须输出一个 JSON 对象，不能输出其他任何文字。\n"
+            "JSON 格式：\n"
+            '{\n  "tool_name": "xxx",\n  "tool_task": "给工具的更具体查询词（可翻译/改写）",\n  "tool_kwargs": {\n    "limit": 2,\n    "lang": "en"\n  }\n}\n'
+            "规则：\n"
+            "1) tool_name 必须来自下面的工具列表（列表已过滤缺少 key 的工具）。\n"
+            "2) tool_kwargs.limit 必须等于 remaining。\n"
+            "3) 如果之前某工具连续失败/无结果，优先切换别的工具。\n"
+            "4) tool_task 不要太长，尽量是搜索关键词串。\n\n"
+            f"当前目标：还需要获取 remaining={remaining} 条（已获取 {already_have} 条）。\n"
+            f"历史执行记录（可能为空）：{json.dumps(history, ensure_ascii=False)}\n"
+            "specialized 工具列表：\n"
+            f"{chr(10).join(specialized_ok) if specialized_ok else '(none)'}\n"
+            "general 工具列表：\n"
+            f"{chr(10).join(general_ok) if general_ok else '(none)'}\n"
         )
-
-    def _build_agent(self):
-        return initialize_agent(
-            tools=self.lc_tools,
-            llm=self.llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            verbose=self.verbose,
-            handle_parsing_errors=True,
-            agent_kwargs={
-                "system_message": (
-                    "你是一个数据采集 Agent，不是聊天助手。\n"
-                    "你必须使用工具获取真实数据。\n"
-                    "如果某个工具无法获取结果，必须明确失败原因，禁止改用其他工具替代。\n"
-                    "禁止生成 JSON 文件或空结果作为最终答案。\n"
-                    "最终结果只能来自工具返回的内容。"
-                )
-            },
-        )
-        user = f"用户任务：{task}"
+        user = f"用户任务：{user_task}"
 
         resp = self.llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
         content = getattr(resp, "content", "") or ""
         data = self._safe_json_loads(content) or {}
 
         tool_name = str(data.get("tool_name") or "").strip()
-        tool_task = str(data.get("tool_task") or task).strip() or task
+        tool_task = str(data.get("tool_task") or user_task).strip() or user_task
         tool_kwargs = data.get("tool_kwargs") if isinstance(data.get("tool_kwargs"), dict) else {}
-
-        if "limit" in kwargs and "limit" not in tool_kwargs:
-            tool_kwargs["limit"] = kwargs["limit"]
+        tool_kwargs["limit"] = remaining
 
         if not tool_name:
-            tool_name = next(iter(self.tools.keys()))
+            # 兜底：优先选 specialized，其次 general（且必须 key 齐全）
+            ok_tools = [
+                t
+                for t in self.tools.values()
+                if not getattr(t, "required_env_vars", [])
+                or all(os.environ.get(k) for k in getattr(t, "required_env_vars", []))
+            ]
+            ok_tools_sorted = sorted(
+                ok_tools,
+                key=lambda t: 0 if getattr(t, "tool_kind", "specialized") == "specialized" else 1,
+            )
+            tool_name = (ok_tools_sorted[0].name if ok_tools_sorted else next(iter(self.tools.keys())))
 
         return tool_name, tool_task, tool_kwargs
 
@@ -193,24 +275,23 @@ class LangChainDataSourceAgent:
             return None
 
 
-def cli():
+def cli() -> None:
     parser = argparse.ArgumentParser(description="Data-source agent demo.")
     parser.add_argument("task", help="Natural-language task to fetch data for.")
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-V3.2")
     parser.add_argument("--api-key", type=str, default=None)
     parser.add_argument("--output", type=str, default="outputs")
-
     args = parser.parse_args()
-
-    output_dir = pathlib.Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     _load_env()
 
-    from langchain_openai import ChatOpenAI
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as exc:  # noqa: BLE001
+        raise ImportError("需要安装 langchain-openai：`pip install langchain-openai`") from exc
 
-    api_key = args.api_key or os.getenv("SILICONFLOW_API_KEY")
+    api_key = args.api_key or os.getenv("SILICONFLOW_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise RuntimeError("缺少 SiliconFlow API Key，请设置 SILICONFLOW_API_KEY")
 
@@ -221,24 +302,47 @@ def cli():
         api_key=api_key,
     )
 
-    agent = LangChainDataSourceAgent(
-        llm=llm,
-        tools=[
-            DuckDuckGoScrapyTool(),
-            GNewsTool(output_dir=str(output_dir)),
-            SemanticScholarTool(output_dir=str(output_dir)),
-            GitHubSearchTool(output_dir=str(output_dir)),
-            HackerNewsTool(output_dir=str(output_dir)),
-        ],
-        limit=args.limit,
-        verbose=True,
-    )
+    output_dir = pathlib.Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    result = agent.run(task=args.task)
+    tools: List[BaseTool] = [DuckDuckGoScrapyTool()]
+    # 这些 tool 可能依赖额外 API key；CLI 里尽量“能用就注册”，不可用也不影响 DDG。
+    try:
+        if __package__:
+            from .baidu_mcp_tool import BaiduAiSearchMcpTool  # type: ignore
+            from .gnews_tool import GNewsTool  # type: ignore
+            from .github_api_tools import GitHubSearchTool  # type: ignore
+            from .hn_tool import HackerNewsTool  # type: ignore
+            from .semantic_scholar import SemanticScholarTool  # type: ignore
+            from .serpapi_tool import SerpApiSearchTool  # type: ignore
+        else:
+            from baidu_mcp_tool import BaiduAiSearchMcpTool  # type: ignore
+            from gnews_tool import GNewsTool  # type: ignore
+            from github_api_tools import GitHubSearchTool  # type: ignore
+            from hn_tool import HackerNewsTool  # type: ignore
+            from semantic_scholar import SemanticScholarTool  # type: ignore
+            from serpapi_tool import SerpApiSearchTool  # type: ignore
+
+        tools.extend(
+            [
+                BaiduAiSearchMcpTool(output_dir=str(output_dir)),
+                GNewsTool(output_dir=str(output_dir)),
+                SemanticScholarTool(output_dir=str(output_dir)),
+                GitHubSearchTool(output_dir=str(output_dir)),
+                HackerNewsTool(output_dir=str(output_dir)),
+                SerpApiSearchTool(output_dir=str(output_dir)),
+            ]
+        )
+    except Exception:
+        pass
+
+    agent = LangChainDataSourceAgent(llm=llm, tools=tools, verbose=True)
+    result = agent.run(task=args.task, limit=args.limit)
 
     if result.success:
         print(f"✓ Agent finished using tool: {result.name}")
-        print(f"Output dir: {result.output_dir}")
+        if result.output_dir:
+            print(f"Output dir: {result.output_dir}")
         print("Files:")
         for f in result.files:
             print(f" - {f}")
