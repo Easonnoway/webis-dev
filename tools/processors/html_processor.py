@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HTML Processor with pluggable text processors
+HTML Processor (based on webis-html library + optional DeepSeek enhancement)
+Dependency: pip install webis-html
 """
 
-from typing import Dict, Union, Set, Optional
-from .base_processor import BaseFileProcessor
-from .text_processors import BaseTextProcessor, DeepSeekTextProcessor, NullTextProcessor
+import logging
 import os
 import tempfile
+import re
+from typing import Dict, Union, Set, Optional
+
+from .base_processor import BaseFileProcessor
+
+logger = logging.getLogger(__name__)
 
 try:
     import webis_html
@@ -17,14 +22,42 @@ except ImportError:
 
 
 class HTMLProcessor(BaseFileProcessor):
-    """HTML File Processor with pluggable text processing"""
+    """HTML file processor - extracts main content using webis-html + optional DeepSeek cleanup"""
 
-    def __init__(self, text_processor: Optional[BaseTextProcessor] = None, api_key: str = None):
+    def __init__(self, deepseek_api_key: Optional[str] = None):
         super().__init__()
         self.supported_extensions = {".html", ".htm"}
-        self.api_key = os.environ.get("DEEPSEEK_API_KEY") or api_key
-        # 注入文本处理器，默认使用DeepSeek
-        self.text_processor = text_processor or DeepSeekTextProcessor(api_key=self.api_key)
+        # Prefer SILICONFLOW_API_KEY, fall back to DEEPSEEK_API_KEY / provided parameter (compat)
+        self.deepseek_api_key = (
+            os.environ.get("SILICONFLOW_API_KEY") or os.environ.get("DEEPSEEK_API_KEY") or deepseek_api_key
+        )
+        self._ensure_webis_html_env()
+
+    def _ensure_webis_html_env(self) -> None:
+        """
+        webis-html 内部默认读取环境变量：
+        - LLM_PREDICTOR_API_KEY 或 DEEPSEEK_API_KEY
+        - LLM_PREDICTOR_API_URL / LLM_PREDICTOR_MODEL
+
+        为了与本项目统一（SILICONFLOW_API_KEY + DeepSeek-V3.2），这里做一次环境变量映射。
+        """
+        if not self.deepseek_api_key:
+            return
+
+        # webis-html 不认识 SILICONFLOW_API_KEY，这里把它映射到它读取的变量名上，
+        # 保证你只需要配置 SILICONFLOW_API_KEY 一处即可。
+        os.environ.setdefault("LLM_PREDICTOR_API_KEY", self.deepseek_api_key)
+        os.environ.setdefault("LLM_PREDICTOR_API_URL", "https://api.siliconflow.cn/v1/chat/completions")
+        os.environ.setdefault("LLM_PREDICTOR_MODEL", "deepseek-ai/DeepSeek-V3.2")
+
+        try:
+            from webis_html.core import llm_predictor  # type: ignore
+
+            if getattr(llm_predictor, "_API_KEY_CACHE", None) is None:
+                return
+            llm_predictor._API_KEY_CACHE = None  # type: ignore[attr-defined]
+        except Exception:
+            return
 
     def get_processor_name(self) -> str:
         return "HTMLProcessor"
@@ -32,7 +65,82 @@ class HTMLProcessor(BaseFileProcessor):
     def get_supported_extensions(self) -> Set[str]:
         return self.supported_extensions
 
-    def extract_text(self, file_path: str) -> Dict[str, Union[str, bool]]:
+    def _basic_noise_reduction(self, text: str) -> str:
+        # Normalize line breaks and whitespace
+        text = re.sub(r'\r\n|\r|\n', '\n', text)
+        text = re.sub(r'\s+', ' ', text)
+
+        # Remove empty lines and very short lines
+        lines = [line.strip() for line in text.split('\n')]
+        cleaned_lines = [line for line in lines if len(line) >= 3]
+
+        return '\n\n'.join(cleaned_lines).strip()
+
+    @staticmethod
+    def _maybe_fix_mojibake(text: str) -> str:
+        """
+        修复常见“UTF-8 被当成 Latin-1 解码”导致的中文乱码（如 'æ¸…å�Ž'）。
+        仅在修复后中文字符显著增加时才应用，避免误伤正常内容。
+        """
+        if not text:
+            return text
+
+        def cjk_count(s: str) -> int:
+            return sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff")
+
+        before = cjk_count(text)
+        # 典型 mojibake 会包含大量 'Ã' 'Â' 'å' 'æ' 等字符
+        marker = sum(text.count(x) for x in ("Ã", "Â", "æ", "å", "ç", "é"))
+        if marker < 20:
+            return text
+
+        try:
+            fixed = text.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
+        except Exception:
+            return text
+
+        after = cjk_count(fixed)
+        return fixed if after >= before + 10 else text
+
+    def _deepseek_enhance(self, text: str) -> str:
+        if not self.deepseek_api_key:
+            logger.warning("[HTMLProcessor] No DeepSeek API key provided, skipping enhancement")
+            return text
+
+        try:
+            import requests
+
+            url = "https://api.siliconflow.cn/v1/chat/completions"
+            payload = {
+                "model": "deepseek-ai/DeepSeek-V3.2",
+                "messages": [
+                    {"role": "system", "content": "Fix typos, garbled text, punctuation and formatting errors in the text. Only correct, do not add or remove content."},
+                    {"role": "user", "content": text}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 2048
+            }
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_api_key}",
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            enhanced_text = result['choices'][0]['message']['content'].strip()
+
+            logger.info("[HTMLProcessor] DeepSeek enhancement successful")
+            return enhanced_text
+
+        except ImportError:
+            logger.error("[HTMLProcessor] Missing requests library. Install with: pip install requests")
+            return text
+        except Exception as e:
+            logger.error(f"[HTMLProcessor] DeepSeek enhancement failed: {str(e)}")
+            return text
+
+    def extract_text(self, file_path: str, use_deepseek: bool = False) -> Dict[str, Union[str, bool]]:
         if not os.path.exists(file_path):
             return {"success": False, "text": "", "error": f"File not found: {file_path}"}
 
@@ -40,63 +148,58 @@ class HTMLProcessor(BaseFileProcessor):
             return {
                 "success": False,
                 "text": "",
-                "error": "webis_html module not installed. Please run: pip install webis-html"
+                "error": "webis_html module not installed. Run: pip install webis-html"
             }
 
         try:
-            # 确保API密钥可用
-            if not self.api_key:
+            if not self.deepseek_api_key:
                 return {
                     "success": False,
                     "text": "",
-                    "error": (
-                        "DeepSeek API key not detected (DEEPSEEK_API_KEY environment variable not set, "
-                        "and not provided in constructor)."
-                    ),
+                    "error": "webis-html extraction requires SiliconFlow API key. Set SILICONFLOW_API_KEY (or DEEPSEEK_API_KEY for compatibility)"
                 }
 
-            # 读取HTML内容
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 html_content = f.read()
 
-            # 使用webis_html提取原始文本
             with tempfile.TemporaryDirectory() as temp_output_dir:
                 result = webis_html.extract_from_html(
                     html_content=html_content,
-                    api_key=self.api_key,
+                    api_key=self.deepseek_api_key,
                     output_dir=temp_output_dir
                 )
 
                 if not result.get("success", False):
-                    error_msg = result.get("error", "Unknown error")
-                    return {"success": False, "text": "", "error": f"Extraction failed: {error_msg}"}
+                    return {"success": False, "text": "", "error": f"webis-html extraction failed: {result.get('error', 'Unknown error')}"}
 
-                # 合并提取结果
                 results = result.get("results", [])
                 if not results:
-                    return {"success": False, "text": "", "error": "No content extracted"}
+                    return {"success": False, "text": "", "error": "No main content extracted"}
 
-                text_parts = [item.get("content", "") for item in results if item.get("content", "")]
+                text_parts = [item.get("content", "").strip() for item in results if item.get("content")]
                 raw_text = "\n\n".join(text_parts)
 
-            # HTML专用处理提示词
-            html_task_prompt = """请对以下HTML提取文本进行优化，要求：
-1. 去除HTML标签残留、脚本样式内容
-2. 保留网页核心内容：文章、标题、列表
-3. 修复格式错乱，优化阅读体验"""
+                # 先修复常见编码导致的乱码，再做规则清理
+                raw_text = self._maybe_fix_mojibake(raw_text)
+                cleaned_text = self._basic_noise_reduction(raw_text)
 
-            # 调用插拔式文本处理器
-            text = self.text_processor.process(raw_text, html_task_prompt)
+                if use_deepseek:
+                    cleaned_text = self._deepseek_enhance(cleaned_text)
 
-            return {
-                "success": True,
-                "text": text,
-                "error": "",
-                "meta": {
-                    "output_dir": result.get("output_dir", ""),
-                    "file_count": len(results)
+                logger.info(
+                    f"[HTMLProcessor] Processed {file_path}, segments: {len(results)}, final length: {len(cleaned_text)}"
+                )
+
+                return {
+                    "success": True,
+                    "text": cleaned_text,
+                    "error": "",
+                    "meta": {
+                        "segment_count": len(results),
+                        "raw_text_length": len(raw_text)
+                    }
                 }
-            }
 
         except Exception as e:
-            return {"success": False, "text": "", "error": f"Processing failed: {str(e)}"}
+            logger.error(f"[HTMLProcessor] Processing failed {file_path}: {str(e)}")
+            return {"success": False, "text": "", "error": f"Exception: {str(e)}"}
