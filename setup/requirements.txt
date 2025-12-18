@@ -1,27 +1,34 @@
 # Unified File Processor Dependencies
 
 # Basic dependencies
-pathlib
+python-dotenv>=1.0.0  # Environment variable management
+requests>=2.31.0  # HTTP requests
 
 # Crawler dependencies
 ddgs>=9.8.0  # DuckDuckGo search library (recommended to use new version)
-# duckduckgo-search  # Old version, renamed to ddgs, kept as alternative
-requests
+scrapy>=2.11.0  # Web crawling framework
+
+# LangChain dependencies (for agent and structuring)
+langchain>=0.1.0  # LangChain core
+langchain-core>=0.1.0  # LangChain core messages and utilities
+langchain-openai>=1.0.0  # LangChain OpenAI integration (used with SiliconFlow)
 
 # Document processing (DocumentProcessor)
-langchain-community>=0.0.10
-docx2txt>=0.8
+docx2txt>=0.8  # Word document processing
 
-# PDF processing (PDFProcessor) 
-pypdf>=3.0.0
+# PDF processing (PDFProcessor)
+pypdf>=3.0.0  # PDF file processing
 
 # Image OCR processing (ImageProcessor)
-easyocr>=1.7.0
-torch>=1.9.0
-torchvision>=0.10.0
+easyocr>=1.7.0  # Image OCR with noise reduction
+torch>=1.9.0  # PyTorch (required by EasyOCR)
+torchvision>=0.10.0  # PyTorch vision utilities
 
 # HTML processing (HTMLProcessor)
-webis-html
+webis-html  # HTML content extraction library
+
+# Retry utilities
+tenacity>=8.2.0  # Retry decorator for network requests
 
 # Optional: Other OCR choices (commented out, uncomment as needed)
 # paddleocr>=2.7.0

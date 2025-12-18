@@ -19,7 +19,14 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # Create and activate Conda environment
 echo ""
 echo "Creating Conda environment 'webis'..."
-conda create -n webis python=3.9 -y
+# Use Python 3.9+ (default to 3.10 if available, fallback to 3.9)
+if conda search python=3.10 &> /dev/null; then
+    PYTHON_VERSION="3.10"
+else
+    PYTHON_VERSION="3.9"
+fi
+echo "Using Python $PYTHON_VERSION"
+conda create -n webis python=$PYTHON_VERSION -y
 
 # Initialize conda for bash
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -39,4 +46,4 @@ echo "To use the environment:"
 echo "  conda activate webis"
 echo ""
 echo "To test the installation:"
-echo "  python examples/demo.py"
+echo "  python tools/examples/demo.py"

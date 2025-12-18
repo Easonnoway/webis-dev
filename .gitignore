@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.*.local
+.enc
+*.enc
 
 # Python
 __pycache__/
@@ -47,6 +49,7 @@ webis-env/
 # Crawler outputs
 crawler/outputs/
 outputs/
+pipeline_outputs/
 
 # Scrapy
 .scrapy/
@@ -68,6 +71,7 @@ dmypy.json
 # Logs
 *.log
 logs/
+code_outputs/
 
 # Temporary files
 *.tmp
