@@ -234,6 +234,7 @@ def main(argv: List[str] | None = None) -> None:
     webbrowser.open(pathlib.Path(file_path).resolve().as_uri())
 
     print(f"HTML文件已成功生成！文件名: {file_path}")
+    print("请在本地浏览器中打开该HTML网页以查看结果。")
 
 
 if __name__ == "__main__":
