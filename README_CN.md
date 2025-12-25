@@ -107,12 +107,12 @@
 
 ```env
 # 必要
-SILICONFLOW_API_KEY=your_key_here
+SILICONFLOW_API_KEY="your_key_here"
 # 可选
-GNEWS_API_KEY=your_key_here
-SERPAPI_API_KEY=your_key_here
-BAIDU_AISEARCH_BEARER=your_key_here
-GITHUB_TOKEN=your_token_here
+GNEWS_API_KEY="your_key_here"
+SERPAPI_API_KEY="your_key_here"
+BAIDU_AISEARCH_BEARER="your_key_here"
+GITHUB_TOKEN="your_token_here"
 ```
 
 ---
