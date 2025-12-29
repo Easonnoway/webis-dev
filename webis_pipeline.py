@@ -175,7 +175,7 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # 1) Crawl
-    log("\n[1/3] crawler：开始获取数据源…")
+    log("\n[1/4] crawler：开始获取数据源…")
     from crawler.agent import LangChainDataSourceAgent  # local package import
     from crawler.baidu_mcp_tool import BaiduAiSearchMcpTool
     from crawler.ddg_scrapy_tool import DuckDuckGoScrapyTool
@@ -200,7 +200,7 @@ def main():
     )
     crawl_result = crawler_agent.run(task=args.task, limit=args.limit)
     if getattr(crawler_agent, "last_choice", None):
-        log(f"[1/3] crawler：tool 选择={crawler_agent.last_choice}")
+        log(f"[1/4] crawler：tool 选择={crawler_agent.last_choice}")
 
     crawl_meta = {
         "tool": crawl_result.name,
@@ -212,7 +212,7 @@ def main():
     }
 
     if not crawl_result.success:
-        log("[1/3] crawler：失败详情（用于排查）")
+        log("[1/4] crawler：失败详情（用于排查）")
         log(json.dumps(crawl_meta, ensure_ascii=False, indent=2))
         (run_dir / "manifest.json").write_text(
             json.dumps({"task": args.task, "crawl": crawl_meta}, ensure_ascii=False, indent=2),
@@ -221,21 +221,21 @@ def main():
         raise SystemExit(f"crawler 失败：{crawl_result.error}")
 
     crawl_files = crawl_result.files or _collect_crawl_files(crawl_result.output_dir or "")
-    log(f"[1/3] crawler：完成（{len(crawl_files)} 个文件） output_dir={crawl_result.output_dir}")
+    log(f"[1/4] crawler：完成（{len(crawl_files)} 个文件） output_dir={crawl_result.output_dir}")
     if args.verbose and crawl_result.meta:
-        log("[1/3] crawler：执行历史")
+        log("[1/4] crawler：执行历史")
         log(json.dumps(crawl_result.meta, ensure_ascii=False, indent=2))
     if crawl_result.error:
-        log(f"[1/3] crawler：未达目标：{crawl_result.error}")
+        log(f"[1/4] crawler：未达目标：{crawl_result.error}")
     (run_dir / "crawl_files.json").write_text(json.dumps(crawl_files, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # 2) Clean to texts
-    log("\n[2/3] tools：开始清洗/抽取纯文本…")
+    log("\n[2/4] tools：开始清洗/抽取纯文本…")
     texts_dir = run_dir / "texts"
     texts, clean_rows = _extract_texts(crawl_files, texts_dir, workers=args.workers, verbose=args.verbose)
     ok = sum(1 for r in clean_rows if r.get("success"))
     bad = len(clean_rows) - ok
-    log(f"[2/3] tools：完成（成功 {ok} / 失败 {bad}） texts_dir={texts_dir}")
+    log(f"[2/4] tools：完成（成功 {ok} / 失败 {bad}） texts_dir={texts_dir}")
     if args.verbose:
         for r in clean_rows:
             if r.get("success"):
@@ -248,7 +248,7 @@ def main():
                 log(f"  ✗ {r.get('input')}  error={r.get('error')}")
 
     # 3) Structuring
-    log("\n[3/3] structuring：开始结构化抽取…")
+    log("\n[3/4] structuring：开始结构化抽取…")
     from structuring.prompt_agent import PromptBuilderAgent
     from structuring.extract_agent import StructureExtractionAgent
 
@@ -256,7 +256,7 @@ def main():
     extract_agent = StructureExtractionAgent(llm)
 
     prompt, output_format = prompt_agent.build_with_format(goal=args.task, texts=texts, schema=None, few_shots=[])
-    log(f"[3/3] structuring：已生成抽取 Prompt（output_format={output_format}）")
+    log(f"[3/4] structuring：已生成抽取 Prompt（output_format={output_format}）")
     extraction = extract_agent.extract(prompt=prompt, text=texts, output_format=output_format)
 
     structured_dir = run_dir / "structured"
