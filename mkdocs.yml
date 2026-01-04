@@ -1,0 +1,57 @@
+site_name: Webis Platform
+site_description: From Web to Wisdom - Your AI-Powered Knowledge Pipeline
+site_author: Webis Team
+repo_url: https://github.com/webis-ai/webis
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+
+features:
+  - navigation.tabs
+  - navigation.sections
+  - search.suggest
+  - search.highlight
+  - content.code.copy
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+  - Core Concepts:
+    - Pipeline: core/pipeline.md
+    - Plugins: core/plugins.md
+    - Schema: core/schema.md
+  - Advanced:
+    - Intelligence: advanced/intelligence.md
+    - Security: advanced/security.md
+  - API Reference:
+    - Python SDK: api/sdk.md
+    - REST API: api/rest.md
+  - Contributing: contributing.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true

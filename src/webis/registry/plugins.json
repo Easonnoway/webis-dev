@@ -1,0 +1,25 @@
+{
+  "plugins": [
+    {
+      "name": "smart_fetcher",
+      "version": "1.0.0",
+      "description": "Multi-strategy data fetcher with retries",
+      "author": "Webis Team",
+      "url": "https://github.com/webis-ai/webis-plugin-smart-fetcher"
+    },
+    {
+      "name": "graph_qa",
+      "version": "0.5.0",
+      "description": "Graph RAG Question Answering",
+      "author": "Webis Team",
+      "url": "https://github.com/webis-ai/webis-plugin-graph-qa"
+    },
+    {
+      "name": "pii_redactor",
+      "version": "1.2.0",
+      "description": "Remove sensitive PII data",
+      "author": "Security Team",
+      "url": "https://github.com/webis-ai/webis-plugin-pii-redactor"
+    }
+  ]
+}

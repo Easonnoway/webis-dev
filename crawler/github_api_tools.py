@@ -16,6 +16,7 @@ class GitHubSearchTool(BaseTool):
         self.output_dir = output_dir
 
     def run(self, task: str, limit: int) -> ToolResult:
+        os.makedirs(self.output_dir, exist_ok=True)
         url = "https://api.github.com/search/repositories"
         r = requests.get(url, params={"q": task, "per_page": limit}, timeout=20)
         r.raise_for_status()

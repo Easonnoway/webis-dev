@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  webis-api:
+    build: .
+    command: uvicorn webis.server.app:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - NEO4J_URL=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+    depends_on:
+      - redis
+      - neo4j
+
+  webis-worker:
+    build: .
+    command: celery -A webis.core.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - NEO4J_URL=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+    depends_on:
+      - redis
+      - neo4j
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  neo4j_data:
+
+  # Optional: Postgres
+  # postgres:
+  #   image: postgres:15-alpine
+  #   environment:
+  #     POSTGRES_USER: webis
+  #     POSTGRES_PASSWORD: password
+  #     POSTGRES_DB: webis
+  #   ports:
+  #     - "5432:5432"

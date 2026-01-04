@@ -1,0 +1,28 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webis-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webis-worker
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: External
+    external:
+      metric:
+        name: redis_queue_length
+        selector:
+          matchLabels:
+            queue: webis_tasks
+      target:
+        type: Value
+        value: 20 # Scale up if more than 20 tasks in queue

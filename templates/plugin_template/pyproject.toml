@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "webis-plugin-{{cookiecutter.plugin_slug}}"
+version = "0.1.0"
+description = "{{cookiecutter.plugin_description}}"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    { name = "{{cookiecutter.author_name}}", email = "{{cookiecutter.author_email}}" },
+]
+dependencies = [
+    "webis>=2.0.0",
+]
+
+[project.entry-points."webis.plugins"]
+{{cookiecutter.plugin_slug}} = "webis_plugin_{{cookiecutter.plugin_slug}}.plugin:{{cookiecutter.plugin_class_name}}"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/webis_plugin_{{cookiecutter.plugin_slug}}"]

@@ -1,0 +1,8 @@
+{
+  "plugin_name": "My Awesome Plugin",
+  "plugin_slug": "my_awesome_plugin",
+  "plugin_description": "A short description of the plugin",
+  "plugin_class_name": "MyAwesomePlugin",
+  "author_name": "Your Name",
+  "author_email": "your.email@example.com"
+}

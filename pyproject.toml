@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=61.0", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webis"
+version = "2.0.0-alpha.1"
+description = "From Web to Wisdom: Your AI-Powered Knowledge Pipeline"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Webis Team", email = "contact@webis.dev"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "langchain>=0.1.0",
+    "langchain-openai>=0.0.1",
+    "requests>=2.25.0",
+    "python-dotenv>=1.0.0",
+    "beautifulsoup4>=4.9.0",
+    "tenacity>=8.0.0",
+    "click>=8.0.0",
+    "rich>=10.0.0",
+    "pyyaml>=6.0",
+    "ddgs>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "types-requests",
+    "types-PyYAML",
+]
+docs = [
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.20.0",
+]
+
+[project.scripts]
+webis = "webis.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--cov=webis --cov-report=term-missing"
